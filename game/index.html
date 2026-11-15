@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kestrel Yard — a tactical FPS</title>
+<style>
+  :root {
+    --ink: #ece7db;
+    --muted: #8b939c;
+    --sodium: #ffb347;
+    --enemy: #e0524d;
+    --friendly: #4da3e0;
+    --panel: rgba(18, 20, 24, 0.72);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #20262e; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); }
+  #game, #game canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+
+  #crosshair {
+    position: absolute; left: 50%; top: 50%; width: 0; height: 0;
+    --gap: 6px;
+  }
+  #crosshair .l { position: absolute; background: var(--ink); box-shadow: 0 0 2px rgba(0,0,0,0.8); }
+  #crosshair .t { left: -1px; bottom: var(--gap); width: 2px; height: 9px; }
+  #crosshair .b { left: -1px; top: var(--gap); width: 2px; height: 9px; }
+  #crosshair .lf { top: -1px; right: var(--gap); height: 2px; width: 9px; }
+  #crosshair .rt { top: -1px; left: var(--gap); height: 2px; width: 9px; }
+  #crosshair .dot { position: absolute; left: -1.5px; top: -1.5px; width: 3px; height: 3px; background: var(--ink); border-radius: 50%; }
+  #hitmarker {
+    position: absolute; left: 50%; top: 50%; width: 18px; height: 18px;
+    transform: translate(-50%, -50%) rotate(45deg); opacity: 0;
+  }
+  #hitmarker::before, #hitmarker::after {
+    content: ""; position: absolute; background: #fff;
+  }
+  #hitmarker::before { left: 8px; top: 0; width: 2px; height: 18px; }
+  #hitmarker::after { top: 8px; left: 0; height: 2px; width: 18px; }
+  #hitmarker.on { opacity: 1; }
+  #damage {
+    position: absolute; inset: 0; opacity: 0; transition: opacity 0.25s;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(224, 82, 77, 0.5) 100%);
+  }
+  #damage.on { opacity: 1; }
+
+  .panel { background: var(--panel); border: 1px solid rgba(236, 231, 219, 0.14); border-radius: 8px; backdrop-filter: blur(2px); }
+
+  #topbar {
+    position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 14px; padding: 8px 16px;
+    font-size: 15px; font-weight: 600; letter-spacing: 0.04em;
+  }
+  #topbar .score { display: flex; align-items: center; gap: 8px; }
+  #score-attack { color: var(--friendly); }
+  #score-defend { color: var(--enemy); }
+  #timer-value.urgent { color: var(--enemy); }
+  #round-value { color: var(--muted); font-weight: 500; font-size: 13px; }
+
+  #feed { position: absolute; top: 14px; right: 16px; text-align: right; font-size: 13px; color: var(--muted); }
+  .feed-line { padding: 2px 0; }
+  .feed-line b { color: var(--ink); }
+
+  /* Minimap: 2D canvas top-right, under the kill feed. Walls, sites, the
+     player arrow and friendlies always show; enemies only when recently seen. */
+  #minimap {
+    position: absolute; top: 64px; right: 16px; width: 150px; height: 110px;
+    border: 1px solid rgba(236, 231, 219, 0.14); border-radius: 8px;
+    background: rgba(18, 20, 24, 0.72);
+  }
+
+  #bottom-left { position: absolute; left: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; }
+  #health-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; }
+  #health-value { font-size: 26px; font-weight: 700; min-width: 44px; text-align: right; }
+  .bar { width: 170px; height: 10px; background: rgba(236, 231, 219, 0.15); border-radius: 5px; overflow: hidden; }
+  .bar > div { height: 100%; border-radius: 5px; }
+  #health-fill { background: var(--ink); width: 100%; }
+  #armor-row { display: none; align-items: center; gap: 10px; padding: 6px 14px; font-size: 12px; color: var(--muted); }
+  #armor-fill { background: var(--friendly); width: 50%; }
+
+  #bottom-right { position: absolute; right: 16px; bottom: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+  #ammo { display: flex; align-items: baseline; gap: 8px; padding: 8px 14px; }
+  #ammo-mag { font-size: 30px; font-weight: 700; }
+  #ammo-reserve { font-size: 15px; color: var(--muted); }
+  #ammo.empty #ammo-mag { color: var(--enemy); }
+  #weapon-name { font-size: 13px; color: var(--muted); }
+  #money-value { font-size: 16px; font-weight: 700; color: var(--sodium); }
+
+  #bomb-bar {
+    position: absolute; top: 70px; left: 50%; transform: translateX(-50%);
+    width: 260px; padding: 8px 12px; text-align: center;
+  }
+  #bomb-label { font-size: 13px; margin-bottom: 6px; }
+  #bomb-fill { background: var(--enemy); width: 100%; }
+  #plant-bar {
+    position: absolute; left: 50%; top: 58%; transform: translateX(-50%);
+    width: 220px; padding: 8px 12px; text-align: center; font-size: 13px;
+  }
+  #plant-fill { background: var(--sodium); width: 0; }
+
+  #banner {
+    position: absolute; left: 50%; top: 22%; transform: translateX(-50%);
+    text-align: center; padding: 14px 26px; max-width: 480px;
+  }
+  #banner-title { font-size: 24px; font-weight: 700; letter-spacing: 0.03em; }
+  #banner-copy { font-size: 14px; color: var(--muted); margin-top: 4px; }
+
+  #buy-menu {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: 460px; padding: 18px 20px; pointer-events: auto;
+  }
+  #buy-menu h2 { font-size: 18px; margin-bottom: 4px; }
+  #buy-menu p { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  .buy-item {
+    display: grid; grid-template-columns: 28px 1fr auto; gap: 4px 10px;
+    width: 100%; text-align: left; background: transparent; border: 1px solid rgba(236,231,219,0.12);
+    color: var(--ink); border-radius: 6px; padding: 9px 10px; margin-bottom: 6px;
+    font: inherit; cursor: pointer;
+  }
+  .buy-item:hover { border-color: var(--sodium); }
+  .buy-item.cant { opacity: 0.45; }
+  .buy-item.owned { border-color: var(--friendly); }
+  .buy-key { color: var(--sodium); font-weight: 700; }
+  .buy-name { font-weight: 600; }
+  .buy-desc { grid-column: 2; font-size: 12px; color: var(--muted); }
+  .buy-price { grid-row: 1; grid-column: 3; font-weight: 700; color: var(--sodium); }
+
+  #overlay {
+    position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px; text-align: center;
+    background: rgba(12, 14, 17, 0.62); backdrop-filter: blur(3px);
+  }
+  /* Author display:flex above beats the UA [hidden]{display:none} rule, so
+     without this the overlay could never be hidden at all — the title menu
+     stayed on screen over every shot frame. */
+  #overlay[hidden] { display: none; }
+  #overlay-title { font-size: 44px; font-weight: 800; letter-spacing: 0.06em; }
+  #overlay-copy { font-size: 16px; color: var(--muted); max-width: 520px; line-height: 1.5; }
+  #play {
+    pointer-events: auto; margin-top: 10px; padding: 12px 34px; font: inherit; font-size: 16px;
+    font-weight: 700; color: #14161a; background: var(--sodium); border: none; border-radius: 8px; cursor: pointer;
+  }
+  #play:hover { filter: brightness(1.08); }
+  #hint { font-size: 13px; color: var(--muted); margin-top: 18px; line-height: 1.7; }
+
+  /* Shot-export UI: only shown in ?shot= mode. The capturing browser has no
+     JS eval and cannot click display:none elements, so the download link is
+     a real visible link (bottom-left, above the title overlay) and the
+     status line shows readiness + export path as plain page text. Neither
+     element is part of the exported PNG — exportShotFrame strips both from
+     the rasterised clone. */
+  #shot-status {
+    position: fixed; left: 16px; bottom: 64px; z-index: 20;
+    padding: 8px 12px; font-size: 14px; font-weight: 600;
+    background: rgba(18, 20, 24, 0.85); color: var(--ink);
+    border: 1px solid rgba(236, 231, 219, 0.25); border-radius: 8px;
+    pointer-events: none;
+  }
+  #shot-download {
+    position: fixed; left: 16px; bottom: 16px; z-index: 20;
+    padding: 10px 16px; font-size: 15px; font-weight: 700;
+    color: #14161a; background: var(--sodium); border: none; border-radius: 8px;
+    text-decoration: none; cursor: pointer; pointer-events: auto;
+  }
+  #shot-download:hover { filter: brightness(1.08); }
+</style>
+</head>
+<body>
+<div id="game"></div>
+<div id="hud">
+  <div id="damage"></div>
+  <div id="crosshair"><span class="dot"></span><span class="l t"></span><span class="l b"></span><span class="l lf"></span><span class="l rt"></span></div>
+  <div id="hitmarker"></div>
+  <div id="topbar" class="panel">
+    <span class="score"><span id="score-attack">0</span> · <span id="score-defend">0</span></span>
+    <span id="timer-value">0:12</span>
+    <span id="round-value">Round 1</span>
+  </div>
+  <div id="feed"></div>
+  <canvas id="minimap" width="150" height="110"></canvas>
+  <div id="bottom-left">
+    <div id="armor-row" class="panel"><span>Armour</span><div class="bar"><div id="armor-fill"></div></div></div>
+    <div id="health-row" class="panel"><span id="health-value">100</span><div class="bar"><div id="health-fill"></div></div></div>
+  </div>
+  <div id="bottom-right">
+    <div id="money-value">$800</div>
+    <div id="ammo" class="panel"><span id="ammo-mag">12</span><span id="ammo-reserve">/ 24</span></div>
+    <div id="weapon-name">P9 Sidearm</div>
+  </div>
+  <div id="bomb-bar" class="panel" hidden>
+    <div id="bomb-label">Bomb planted</div>
+    <div class="bar"><div id="bomb-fill"></div></div>
+  </div>
+  <div id="plant-bar" class="panel" hidden>
+    <div>Planting…</div>
+    <div class="bar"><div id="plant-fill"></div></div>
+  </div>
+  <div id="banner" class="panel" hidden>
+    <div id="banner-title"></div>
+    <div id="banner-copy"></div>
+  </div>
+  <div id="buy-menu" class="panel" hidden>
+    <h2>Buy — Kestrel Yard</h2>
+    <p>Press 1–5 or click. B closes. The round starts when the timer ends.</p>
+    <div id="buy-list"></div>
+  </div>
+</div>
+<div id="overlay">
+  <div id="overlay-title">Kestrel Yard</div>
+  <div id="overlay-copy">A dusk container yard. Plant the bomb at Foundry or Silo — or drop every defender. First to 5 rounds takes the yard.</div>
+  <button id="play" type="button">Click to play</button>
+  <div id="hint">WASD move · Mouse look · Click shoot · R reload · 1/2/3 weapons · G grenade · B buy · E plant / defuse · Ctrl crouch · Shift walk</div>
+</div>
+<div id="shot-status" hidden>Shot export: preparing…</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/three.module.min.js"
+  }
+}
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
